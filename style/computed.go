@@ -61,6 +61,7 @@ type ComputedStyle struct {
 	BackgroundSize     string
 	BackgroundPosition string
 	BackgroundRepeat   string
+	BackgroundClip     string
 
 	FontFamily          string
 	FontSize            float64

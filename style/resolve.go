@@ -175,6 +175,10 @@ func resolveNode(node *parse.Node, parent *ComputedStyle, parentVars map[string]
 	props := mergeProps(node)
 	vars, resolved := resolveVariables(props, parentVars)
 	cs := resolveStyle(resolved, parent, rootFontSize, viewportWidth, viewportHeight)
+	if parent != nil && parent.BackgroundClip == "text" && cs.BackgroundClip == "" && cs.BackgroundImage == "" {
+		cs.BackgroundImage = parent.BackgroundImage
+		cs.BackgroundClip = "text"
+	}
 	result[node] = cs
 
 	for _, child := range node.Children {
@@ -396,6 +400,7 @@ func resolveStyle(props map[string]string, parent *ComputedStyle, rootFontSize, 
 	cs.BackgroundSize = getOr(props, "background-size", "")
 	cs.BackgroundPosition = getOr(props, "background-position", "")
 	cs.BackgroundRepeat = getOr(props, "background-repeat", "")
+	cs.BackgroundClip = getOr(props, "background-clip", getOr(props, "-webkit-background-clip", ""))
 
 	if v, ok := props["font-family"]; ok {
 		first, _, _ := strings.Cut(v, ",")

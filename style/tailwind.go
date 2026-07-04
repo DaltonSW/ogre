@@ -807,6 +807,15 @@ func resolveTailwindClass(cls string, out map[string]string) {
 	case "bg-gradient-to-tl":
 		out["--tw-gradient-dir"] = "to top left"
 
+	case "bg-clip-text":
+		out["background-clip"] = "text"
+	case "bg-clip-border":
+		out["background-clip"] = "border-box"
+	case "bg-clip-padding":
+		out["background-clip"] = "padding-box"
+	case "bg-clip-content":
+		out["background-clip"] = "content-box"
+
 	default:
 		resolveTailwindDynamic(cls, out)
 	}

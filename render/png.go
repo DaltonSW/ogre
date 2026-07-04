@@ -52,6 +52,7 @@ type PNGRenderer struct {
 	wrappedText   map[*parse.Node][]fontpkg.TextLine
 	emojiProvider *fontpkg.EmojiProvider
 	maskCache     map[maskKey]*image.Alpha
+	origin        *gradientClipOrigin
 }
 
 type maskKey struct {
@@ -128,6 +129,7 @@ func (r *PNGRenderer) renderNode(node *layout.Node, pn *parse.Node, cs *style.Co
 			reverse:       r.reverse,
 			wrappedText:   r.wrappedText,
 			emojiProvider: r.emojiProvider,
+			origin:        r.origin,
 		}
 		sub.renderNodeContent(node, pn, cs, absX, absY)
 		bounds := image.Rect(int(absX), int(absY), int(absX+l.Width), int(absY+l.Height)).Intersect(r.img.Bounds())
@@ -179,7 +181,18 @@ func (r *PNGRenderer) renderNodeContent(node *layout.Node, pn *parse.Node, cs *s
 	hasRadius := cs.BorderTopLeftRadius > 0 || cs.BorderTopRightRadius > 0 ||
 		cs.BorderBottomLeftRadius > 0 || cs.BorderBottomRightRadius > 0
 
-	if cs.BackgroundImage != "" {
+	childOrigin := r.origin
+	if cs.BackgroundClip == "text" && cs.BackgroundImage != "" {
+		if childOrigin == nil || childOrigin.css != cs.BackgroundImage {
+			childOrigin = &gradientClipOrigin{x: absX, y: absY, w: l.Width, h: l.Height, css: cs.BackgroundImage}
+		}
+	} else {
+		childOrigin = nil
+	}
+
+	if cs.BackgroundClip == "text" {
+		// Background is clipped to the text glyphs of child text nodes; do not paint it here.
+	} else if cs.BackgroundImage != "" {
 		if hasRadius {
 			tmp := acquireRGBA(r.img.Bounds())
 			sub := &PNGRenderer{img: tmp, styles: r.styles, fonts: r.fonts, reverse: r.reverse, wrappedText: r.wrappedText, emojiProvider: r.emojiProvider}
@@ -209,7 +222,7 @@ func (r *PNGRenderer) renderNodeContent(node *layout.Node, pn *parse.Node, cs *s
 	if cs.Overflow == style.OverflowHidden {
 		clip := image.Rect(int(absX), int(absY), int(absX+l.Width), int(absY+l.Height))
 		tmp := acquireRGBA(r.img.Bounds())
-		sub := &PNGRenderer{img: tmp, styles: r.styles, fonts: r.fonts, reverse: r.reverse, wrappedText: r.wrappedText, emojiProvider: r.emojiProvider}
+		sub := &PNGRenderer{img: tmp, styles: r.styles, fonts: r.fonts, reverse: r.reverse, wrappedText: r.wrappedText, emojiProvider: r.emojiProvider, origin: childOrigin}
 		for _, child := range node.Children {
 			cpn := sub.reverse[child]
 			ccs := sub.styles[cpn]
@@ -229,11 +242,14 @@ func (r *PNGRenderer) renderNodeContent(node *layout.Node, pn *parse.Node, cs *s
 		return
 	}
 
+	prevOrigin := r.origin
+	r.origin = childOrigin
 	for _, child := range node.Children {
 		cpn := r.reverse[child]
 		ccs := r.styles[cpn]
 		r.renderNode(child, cpn, ccs, absX, absY)
 	}
+	r.origin = prevOrigin
 }
 
 func (r *PNGRenderer) renderBorders(absX, absY, w, h float64, cs *style.ComputedStyle) {
@@ -343,6 +359,13 @@ func (r *PNGRenderer) renderTextNode(l layout.Layout, pn *parse.Node, cs *style.
 	}
 	ascent := fontpkg.Ascent(ff)
 
+	if cs.BackgroundClip == "text" && cs.BackgroundImage != "" {
+		if _, err := style.ParseGradient(cs.BackgroundImage); err == nil {
+			r.renderGradientText(l, pn, cs, absX, absY, ff, ascent, size, lineHeight)
+			return
+		}
+	}
+
 	if lines, ok := r.wrappedText[pn]; ok && len(lines) > 0 {
 		for i, line := range lines {
 			text := applyTextTransform(line.Text, cs.TextTransform)
@@ -356,7 +379,60 @@ func (r *PNGRenderer) renderTextNode(l layout.Layout, pn *parse.Node, cs *style.
 	r.drawTextWithEmoji(pn.Text, absX, absY+ascent, ascent, size, tc, ff, cs)
 }
 
+func (r *PNGRenderer) renderGradientText(l layout.Layout, pn *parse.Node, cs *style.ComputedStyle, absX, absY float64, ff font.Face, ascent, size, lineHeight float64) {
+	mask := image.NewAlpha(r.img.Bounds())
+	white := image.NewUniform(color.Alpha{A: 255})
+
+	drawLine := func(text string, x, y float64) {
+		if r.rasterizeShapedPath(mask, white, text, x, y, size, cs) {
+			return
+		}
+		drawer := &font.Drawer{
+			Dst:  mask,
+			Src:  white,
+			Face: ff,
+			Dot:  fixed.Point26_6{X: fixed.Int26_6(x * 64), Y: fixed.Int26_6(y * 64)},
+		}
+		drawer.DrawString(text)
+	}
+
+	if lines, ok := r.wrappedText[pn]; ok && len(lines) > 0 {
+		for i, line := range lines {
+			text := applyTextTransform(line.Text, cs.TextTransform)
+			x := alignX(absX, l.Width, line.Width, cs.TextAlign)
+			y := absY + ascent + float64(i)*lineHeight
+			drawLine(text, x, y)
+		}
+	} else {
+		drawLine(pn.Text, absX, absY+ascent)
+	}
+
+	gx, gy, gw, gh := absX, absY, l.Width, l.Height
+	if r.origin != nil {
+		gx, gy, gw, gh = r.origin.x, r.origin.y, r.origin.w, r.origin.h
+	}
+
+	tmp := acquireRGBA(r.img.Bounds())
+	defer releaseRGBA(tmp)
+	sub := &PNGRenderer{
+		img:           tmp,
+		styles:        r.styles,
+		fonts:         r.fonts,
+		reverse:       r.reverse,
+		wrappedText:   r.wrappedText,
+		emojiProvider: r.emojiProvider,
+	}
+	sub.renderGradient(gx, gy, gw, gh, cs)
+
+	rect := image.Rect(int(absX), int(absY), int(absX+l.Width), int(absY+l.Height)).Intersect(r.img.Bounds())
+	draw.DrawMask(r.img, rect, tmp, rect.Min, mask, rect.Min, draw.Over)
+}
+
 func (r *PNGRenderer) drawShapedText(text string, x, y, size float64, tc color.RGBA, cs *style.ComputedStyle) bool {
+	return r.rasterizeShapedPath(r.img, image.NewUniform(tc), text, x, y, size, cs)
+}
+
+func (r *PNGRenderer) rasterizeShapedPath(dst draw.Image, src image.Image, text string, x, y, size float64, cs *style.ComputedStyle) bool {
 	if r.fonts == nil {
 		return false
 	}
@@ -376,7 +452,7 @@ func (r *PNGRenderer) drawShapedText(text string, x, y, size float64, tc color.R
 	if pathD == "" {
 		return false
 	}
-	rast := vector.NewRasterizer(r.img.Bounds().Dx(), r.img.Bounds().Dy())
+	rast := vector.NewRasterizer(dst.Bounds().Dx(), dst.Bounds().Dy())
 	cmds := parseSVGPath(pathD)
 	var cx, cy, startX, startY, lastCPX, lastCPY float64
 	var lastCmd byte
@@ -422,7 +498,7 @@ func (r *PNGRenderer) drawShapedText(text string, x, y, size float64, tc color.R
 	if lastCmd != 'Z' && lastCmd != 'z' && lastCmd != 0 {
 		rast.ClosePath()
 	}
-	rast.Draw(r.img, r.img.Bounds(), image.NewUniform(tc), image.Point{})
+	rast.Draw(dst, dst.Bounds(), src, image.Point{})
 	return true
 }
 
