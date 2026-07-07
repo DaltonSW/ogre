@@ -108,7 +108,12 @@ func computeNode(node *Node, availableWidth, availableHeight float64) {
 
 	items := make([]*flexItem, len(flexChildren))
 	for i, child := range flexChildren {
-		base := determineFlexBaseSize(child, mainSize, isRow, containerWidth, containerHeight)
+		// Children resolve percentages/estimated intrinsic size against this
+		// node's content box, not its border box — containerWidth/Height is
+		// pre-padding and threads unchanged through estimateSize's recursion
+		// into nested containers (e.g. a wrapped-text <div>'s text child),
+		// letting text wrap against a wider box than is actually available.
+		base := determineFlexBaseSize(child, mainSize, isRow, contentWidth, contentHeight)
 		items[i] = &flexItem{
 			node:     child,
 			baseSize: base,
@@ -124,7 +129,7 @@ func computeNode(node *Node, availableWidth, availableHeight float64) {
 
 	for _, line := range lines {
 		for _, item := range line.items {
-			cs := determineCrossSize(item, crossSize, isRow, containerWidth, containerHeight)
+			cs := determineCrossSize(item, crossSize, isRow, contentWidth, contentHeight)
 			item.crossSize = cs
 		}
 		maxCross := 0.0
