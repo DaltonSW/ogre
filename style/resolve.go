@@ -424,16 +424,43 @@ func resolveStyle(props map[string]string, parent *ComputedStyle, rootFontSize, 
 		cs.LetterSpacing = ParseValue(v).Resolve(ctx)
 	}
 
-	cs.Direction = getOr(props, "direction", "")
-	cs.TextAlign = ParseTextAlign(getOr(props, "text-align", ""))
-	cs.TextTransform = ParseTextTransform(getOr(props, "text-transform", ""))
-	cs.TextDecorationLine = ParseTextDecorationLine(getOr(props, "text-decoration-line", ""))
-	cs.TextDecorationColor = resolveColor(props, "text-decoration-color", cs.Color)
-	cs.TextDecorationStyle = getOr(props, "text-decoration-style", "")
-	cs.WhiteSpace = ParseWhiteSpace(getOr(props, "white-space", ""))
-	cs.WordBreak = ParseWordBreak(getOr(props, "word-break", ""))
+	// These properties are all in inheritedProperties: the loop above already
+	// copied the parent's resolved value onto cs when this node doesn't set its
+	// own. Only overwrite when the node explicitly declares the property —
+	// unconditionally re-deriving from props (as this used to do) would reset
+	// every non-explicit node back to the CSS initial value and silently break
+	// inheritance (e.g. a wrapped, multi-line child ignoring an ancestor's
+	// text-align because the child's own text node never sets it explicitly).
+	if v, ok := props["direction"]; ok {
+		cs.Direction = v
+	}
+	if v, ok := props["text-align"]; ok {
+		cs.TextAlign = ParseTextAlign(v)
+	}
+	if v, ok := props["text-transform"]; ok {
+		cs.TextTransform = ParseTextTransform(v)
+	}
+	if v, ok := props["text-decoration-line"]; ok {
+		cs.TextDecorationLine = ParseTextDecorationLine(v)
+	}
+	if _, ok := props["text-decoration-color"]; ok {
+		cs.TextDecorationColor = resolveColor(props, "text-decoration-color", cs.Color)
+	} else if parent == nil {
+		cs.TextDecorationColor = cs.Color
+	}
+	if v, ok := props["text-decoration-style"]; ok {
+		cs.TextDecorationStyle = v
+	}
+	if v, ok := props["white-space"]; ok {
+		cs.WhiteSpace = ParseWhiteSpace(v)
+	}
+	if v, ok := props["word-break"]; ok {
+		cs.WordBreak = ParseWordBreak(v)
+	}
 	cs.TextOverflow = getOr(props, "text-overflow", "")
-	cs.TextShadow = getOr(props, "text-shadow", "")
+	if v, ok := props["text-shadow"]; ok {
+		cs.TextShadow = v
+	}
 
 	if v, ok := props["line-clamp"]; ok {
 		cs.LineClamp = parseInt(v)
