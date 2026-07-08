@@ -78,6 +78,16 @@ func RenderTextWithIDGen(lines []font.TextLine, cs *style.ComputedStyle, boxX, b
 		}
 	}
 
+	// halfLeading distributes the gap between the line box (lineHeight) and the
+	// font's own em-box (ascent+descent) evenly above and below the glyphs, per
+	// the CSS inline-layout algorithm. Without it, a line is anchored purely by
+	// the font's ascent from the box top: since real fonts rarely have
+	// ascent+descent == lineHeight (most run larger than the default 1.2x
+	// line-height), glyphs drift toward the bottom of their box instead of
+	// sitting centered in it — most visible wherever a box has vertical padding
+	// around a single line, e.g. a pill/badge.
+	halfLeading := (lineHeight - (ascent + descent)) / 2
+
 	var shadows strings.Builder
 	var content strings.Builder
 	var decorations strings.Builder
@@ -109,7 +119,7 @@ func RenderTextWithIDGen(lines []font.TextLine, cs *style.ComputedStyle, boxX, b
 			align = style.TextAlignRight
 		}
 		x := alignX(boxX, boxW, line.Width, align)
-		y := boxY + ascent + float64(i)*lineHeight
+		y := boxY + halfLeading + ascent + float64(i)*lineHeight
 
 		for _, s := range textShadows {
 			sx := x + s.OffsetX

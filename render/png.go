@@ -358,10 +358,19 @@ func (r *PNGRenderer) renderTextNode(l layout.Layout, pn *parse.Node, cs *style.
 		lineHeight = size * 1.2
 	}
 	ascent := fontpkg.Ascent(ff)
+	descent := fontpkg.Descent(ff)
+	// halfLeading distributes the gap between the line box (lineHeight) and the
+	// font's own em-box (ascent+descent) evenly above and below the glyphs, per
+	// the CSS inline-layout algorithm. Without it, a line is anchored purely by
+	// the font's ascent from the box top: since real fonts rarely have
+	// ascent+descent == lineHeight, glyphs drift toward the bottom of their box
+	// instead of sitting centered in it — most visible wherever a box has
+	// vertical padding around a single line, e.g. a pill/badge.
+	halfLeading := (lineHeight - (ascent + descent)) / 2
 
 	if cs.BackgroundClip == "text" && cs.BackgroundImage != "" {
 		if _, err := style.ParseGradient(cs.BackgroundImage); err == nil {
-			r.renderGradientText(l, pn, cs, absX, absY, ff, ascent, size, lineHeight)
+			r.renderGradientText(l, pn, cs, absX, absY, ff, ascent+halfLeading, size, lineHeight)
 			return
 		}
 	}
@@ -370,13 +379,13 @@ func (r *PNGRenderer) renderTextNode(l layout.Layout, pn *parse.Node, cs *style.
 		for i, line := range lines {
 			text := applyTextTransform(line.Text, cs.TextTransform)
 			x := alignX(absX, l.Width, line.Width, cs.TextAlign)
-			y := absY + ascent + float64(i)*lineHeight
+			y := absY + halfLeading + ascent + float64(i)*lineHeight
 			r.drawTextWithEmoji(text, x, y, ascent, size, tc, ff, cs)
 		}
 		return
 	}
 
-	r.drawTextWithEmoji(pn.Text, absX, absY+ascent, ascent, size, tc, ff, cs)
+	r.drawTextWithEmoji(pn.Text, absX, absY+halfLeading+ascent, ascent, size, tc, ff, cs)
 }
 
 func (r *PNGRenderer) renderGradientText(l layout.Layout, pn *parse.Node, cs *style.ComputedStyle, absX, absY float64, ff font.Face, ascent, size, lineHeight float64) {
