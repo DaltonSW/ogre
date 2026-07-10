@@ -67,8 +67,13 @@ type PNGOptions struct {
 }
 
 func RenderPNG(tree *layout.LayoutTree, styles map[*parse.Node]*style.ComputedStyle, fonts *fontpkg.Manager, width, height int, opts ...PNGOptions) ([]byte, error) {
+	// Starts fully transparent (image.NewRGBA zero-initializes Pix to
+	// R,G,B,A=0). Matches the SVG renderer's contract: an element with no
+	// background paints nothing, so the canvas shows through as transparent.
+	// A rounded-corner element's own background is masked to its radius
+	// elsewhere in this file; corners the mask excludes must stay
+	// transparent rather than reveal an opaque pre-fill.
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(img, img.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
 
 	reverse := make(map[*layout.Node]*parse.Node, len(tree.NodeMap))
 	for pn, ln := range tree.NodeMap {
