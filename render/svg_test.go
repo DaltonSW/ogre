@@ -46,6 +46,26 @@ func TestSimpleDivBackground(t *testing.T) {
 	}
 }
 
+func TestBackgroundClipTextSuppressesElementRect(t *testing.T) {
+	pn := &parse.Node{Type: parse.ElementNode, Tag: "div"}
+	cs := style.NewComputedStyle()
+	cs.BackgroundImage = "linear-gradient(to right,#f00,#00f)"
+	cs.BackgroundClip = "text"
+	cs.Width = style.Value{Raw: 100, Unit: style.UnitPx}
+	cs.Height = style.Value{Raw: 50, Unit: style.UnitPx}
+	styles := map[*parse.Node]*style.ComputedStyle{pn: cs}
+	tree := buildSimpleTree(pn, styles, 800, 600)
+
+	svg := RenderSVG(tree, styles, nil, 800, 600)
+
+	if strings.Contains(svg, "<rect") {
+		t.Fatalf("expected no background rect for background-clip:text element, got: %s", svg)
+	}
+	if strings.Contains(svg, "linearGradient") {
+		t.Fatalf("expected no element gradient def for background-clip:text, got: %s", svg)
+	}
+}
+
 func TestNestedDivs(t *testing.T) {
 	child := &parse.Node{Type: parse.ElementNode, Tag: "div"}
 	parent := &parse.Node{Type: parse.ElementNode, Tag: "div", Children: []*parse.Node{child}}

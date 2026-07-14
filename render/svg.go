@@ -79,10 +79,10 @@ func RenderSVGWithOptions(tree *layout.LayoutTree, styles map[*parse.Node]*style
 }
 
 func renderNode(b *strings.Builder, node *layout.Node, pn *parse.Node, cs *style.ComputedStyle, ctx *RenderContext) {
-	renderNodeAt(b, node, pn, cs, ctx, 0, 0)
+	renderNodeAt(b, node, pn, cs, ctx, 0, 0, nil)
 }
 
-func renderNodeAt(b *strings.Builder, node *layout.Node, pn *parse.Node, cs *style.ComputedStyle, ctx *RenderContext, parentX, parentY float64) {
+func renderNodeAt(b *strings.Builder, node *layout.Node, pn *parse.Node, cs *style.ComputedStyle, ctx *RenderContext, parentX, parentY float64, origin *gradientClipOrigin) {
 	if cs == nil {
 		cs = style.NewComputedStyle()
 	}
@@ -124,7 +124,11 @@ func renderNodeAt(b *strings.Builder, node *layout.Node, pn *parse.Node, cs *sty
 
 	if pn != nil && pn.Type == parse.TextNode {
 		if lines, ok := ctx.WrappedText[pn]; ok && len(lines) > 0 {
-			result := RenderTextWithIDGen(lines, cs, absX, absY, l.Width, l.Height, func(prefix string) string {
+			gx, gy, gw, gh := absX, absY, l.Width, l.Height
+			if origin != nil {
+				gx, gy, gw, gh = origin.x, origin.y, origin.w, origin.h
+			}
+			result := RenderTextWithIDGen(lines, cs, absX, absY, l.Width, l.Height, gx, gy, gw, gh, func(prefix string) string {
 				return ctx.ids.next(prefix)
 			}, ctx.FontMgr, ctx.EmojiProvider)
 			b.WriteString(result.Shadows)
@@ -146,6 +150,19 @@ func renderNodeAt(b *strings.Builder, node *layout.Node, pn *parse.Node, cs *sty
 
 		bgResult := RenderBackground(cs, l.X, l.Y, l.Width, l.Height,
 			func(prefix string) string { return ctx.ids.next(prefix) })
+
+		childOrigin := origin
+		if cs.BackgroundClip == "text" && cs.BackgroundImage != "" {
+			if childOrigin == nil || childOrigin.css != cs.BackgroundImage {
+				childOrigin = &gradientClipOrigin{x: l.X, y: l.Y, w: l.Width, h: l.Height, css: cs.BackgroundImage}
+			}
+		} else {
+			childOrigin = nil
+		}
+
+		if cs.BackgroundClip == "text" {
+			bgResult = BackgroundResult{}
+		}
 		if bgResult.Defs != "" {
 			fmt.Fprintf(b, "<defs>%s</defs>", bgResult.Defs)
 		}
@@ -213,7 +230,7 @@ func renderNodeAt(b *strings.Builder, node *layout.Node, pn *parse.Node, cs *sty
 			for _, child := range node.Children {
 				cpn := ctx.reverse[child]
 				ccs := ctx.Styles[cpn]
-				renderNodeAt(b, child, cpn, ccs, ctx, absX, absY)
+				renderNodeAt(b, child, cpn, ccs, ctx, absX, absY, childOrigin)
 			}
 		}
 

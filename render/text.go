@@ -17,13 +17,23 @@ type TextRenderResult struct {
 	Decorations string
 }
 
-// RenderText generates the corresponding output format.
-func RenderText(lines []font.TextLine, cs *style.ComputedStyle, boxX, boxY, boxW, boxH float64) TextRenderResult {
-	return RenderTextWithIDGen(lines, cs, boxX, boxY, boxW, boxH, nil, nil, nil)
+// gradientClipOrigin anchors a background-clip:text gradient to the box of the
+// element that declared it, so text split across nested elements (e.g. spans)
+// samples one continuous gradient instead of each fragment restarting its own.
+type gradientClipOrigin struct {
+	x, y, w, h float64
+	css        string
 }
 
-// RenderTextWithIDGen generates the corresponding output format.
-func RenderTextWithIDGen(lines []font.TextLine, cs *style.ComputedStyle, boxX, boxY, boxW, boxH float64, idGen func(string) string, fontMgr *font.Manager, emojiProvider ...*font.EmojiProvider) TextRenderResult {
+// RenderText generates the corresponding output format.
+func RenderText(lines []font.TextLine, cs *style.ComputedStyle, boxX, boxY, boxW, boxH float64) TextRenderResult {
+	return RenderTextWithIDGen(lines, cs, boxX, boxY, boxW, boxH, boxX, boxY, boxW, boxH, nil, nil, nil)
+}
+
+// RenderTextWithIDGen generates the corresponding output format. gradX/Y/W/H give the box
+// the background-clip:text gradient should be sized against, which may be an ancestor's
+// box when this text node inherited the clip rather than declaring it itself.
+func RenderTextWithIDGen(lines []font.TextLine, cs *style.ComputedStyle, boxX, boxY, boxW, boxH, gradX, gradY, gradW, gradH float64, idGen func(string) string, fontMgr *font.Manager, emojiProvider ...*font.EmojiProvider) TextRenderResult {
 	if len(lines) == 0 {
 		return TextRenderResult{}
 	}
@@ -78,6 +88,16 @@ func RenderTextWithIDGen(lines []font.TextLine, cs *style.ComputedStyle, boxX, b
 	}
 
 	rtl := isRTL(cs)
+
+	var clipGrad style.Gradient
+	clipText := false
+	if idGen != nil && cs.BackgroundClip == "text" && cs.BackgroundImage != "" {
+		if g, err := style.ParseGradient(cs.BackgroundImage); err == nil {
+			clipGrad = g
+			clipText = true
+		}
+	}
+	var clipPaths strings.Builder
 
 	for i, line := range lines {
 		text := applyTextTransform(line.Text, cs.TextTransform)
@@ -158,7 +178,9 @@ func RenderTextWithIDGen(lines []font.TextLine, cs *style.ComputedStyle, boxX, b
 			ep = emojiProvider[0]
 		}
 
-		if ep != nil && containsEmoji(text) {
+		if clipText {
+			appendGlyphClip(&clipPaths, text, x, y, family, size, weight, cs, fontMgr)
+		} else if ep != nil && containsEmoji(text) {
 			segments := font.SplitEmoji(text)
 			cx := x
 			for _, seg := range segments {
@@ -189,6 +211,24 @@ func RenderTextWithIDGen(lines []font.TextLine, cs *style.ComputedStyle, boxX, b
 
 		if cs.TextDecorationLine != style.TextDecorationNone {
 			renderDecoration(&decorations, cs, x, y, line.Width, ascent, descent)
+		}
+	}
+
+	if clipText && clipPaths.Len() > 0 {
+		distributeStops(clipGrad.Stops)
+		var bg BackgroundResult
+		switch clipGrad.Type {
+		case style.LinearGradient, style.RepeatingLinearGradient:
+			bg = renderLinearGradient(clipGrad, gradW, gradH, idGen)
+		case style.RadialGradient, style.RepeatingRadialGradient:
+			bg = renderRadialGradient(clipGrad, idGen)
+		}
+		if bg.Fill != "" {
+			clipID := idGen("tclip")
+			fmt.Fprintf(&content, `<defs><clipPath id="%s">%s</clipPath>%s</defs>`,
+				clipID, clipPaths.String(), bg.Defs)
+			fmt.Fprintf(&content, `<rect x="%.4g" y="%.4g" width="%.4g" height="%.4g" fill="%s" clip-path="url(#%s)"/>`,
+				gradX, gradY, gradW, gradH, bg.Fill, clipID)
 		}
 	}
 
@@ -268,6 +308,26 @@ func renderDecoration(b *strings.Builder, cs *style.ComputedStyle, x, baseline, 
 
 	fmt.Fprintf(b, `<line x1="%.4g" y1="%.4g" x2="%.4g" y2="%.4g" stroke="%s" stroke-width="1"%s/>`,
 		x, dy, x+lineWidth, dy, stroke, dashArray)
+}
+
+func appendGlyphClip(b *strings.Builder, text string, x, y float64, family string, size float64, weight int, cs *style.ComputedStyle, fontMgr *font.Manager) {
+	if fontMgr == nil {
+		return
+	}
+	fontStyle := cs.FontStyle
+	if fontStyle == "" {
+		fontStyle = "normal"
+	}
+	rtl := cs.Direction == "rtl"
+	var pathD string
+	if rtl || needsShaping(text) {
+		pathD, _ = font.ShapedTextToPath(fontMgr, text, family, weight, fontStyle, size, rtl)
+	} else {
+		pathD, _ = font.TextToPath(fontMgr, text, family, weight, fontStyle, size)
+	}
+	if pathD != "" {
+		fmt.Fprintf(b, `<path d="%s" transform="translate(%.4g,%.4g)"/>`, pathD, x, y)
+	}
 }
 
 func renderTextSegment(content *strings.Builder, text string, x, y float64, family string, size float64, weight int, cs *style.ComputedStyle, fill string, fontMgr *font.Manager) {
