@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.5.0] - 2026-07-14
+
+### Documentation
+
+- Update changelog for v1.4.0
+
+### Features
+
+- Gradient text via background-clip (#5)
+
 ## [1.4.0] - 2026-04-12
 
 ### Bug Fixes
